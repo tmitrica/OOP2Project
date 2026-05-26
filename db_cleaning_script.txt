@@ -1,0 +1,31 @@
+
+DROP TABLE IF EXISTS books CASCADE;
+DROP TABLE IF EXISTS companies CASCADE;
+DROP TABLE IF EXISTS authors CASCADE;
+DROP TABLE IF EXISTS subscriptions CASCADE;
+
+CREATE TABLE subscriptions (
+    package_name VARCHAR(50) PRIMARY KEY,
+    simultaneous_limit INT NOT NULL,
+    monthly_cost DECIMAL(10,2) NOT NULL
+);
+
+CREATE TABLE authors (
+    name VARCHAR(100) PRIMARY KEY,
+    nationality VARCHAR(50)
+);
+
+CREATE TABLE companies (
+    tax_id VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    headquarters_address VARCHAR(200),
+    subscription_name VARCHAR(50) REFERENCES subscriptions(package_name)
+);
+
+CREATE TABLE books (
+    isbn VARCHAR(50) PRIMARY KEY,
+    title VARCHAR(150) NOT NULL,
+    publication_year INT,
+    available_copies INT NOT NULL,
+    author_name VARCHAR(100) REFERENCES authors(name)
+);
