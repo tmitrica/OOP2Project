@@ -1,28 +1,29 @@
 /*
-This project emulates an online app for book borrowing for companies. The 8 classes used are:
-1. Subscription - the type of subscription a company has on the app
+This project emulates an online app for book borrowing for companies and universities. The 9 classes used are:
+1. Subscription - the type of subscription a company/user has on the app
 2. Company - a company that uses the app
 3. Author - someone who wrote a book that is on the app
 4. User - abstract class that describes a user of the app
-5. Employee - inherits from user, employed at a company and can borrow books
-6. Book - books that can be found on the app
-7. Loan - describes what book is borrowed by whom, the period of the loan, basically a link
-          between an employee and a book
-8. Review - after a loan, a user can leave a review for the book
+5. Employee - inherits from User, employed at a company and can borrow books
+6. Student - inherits from User, enrolled at a university, has a predefined free subscription
+7. Book - books that can be found on the app
+8. Loan - describes what book is borrowed by whom, the period of the loan, basically a link
+          between a user and a book
+9. Review - after a loan, a user can leave a review for the book
 
 10 functionalities(methods) for the app:
-1. Increment / Decrement Burrowed Books -> adjusts the number of books that an employee currently has
+1. Increment / Decrement Burrowed Books -> adjusts the number of books that a user currently has
 2. Increase / Decrease Stock -> adjusts the stock of a book
 3. Compare To / To String -> used by the service class for comparing and printing books
 4. Mark As Returned -> marks a loan as finalized from ongoing
-5. Register Employee -> saves an employee(using his/her ID) in a dictionary for future lookups
+5. Register User -> saves a user(using his/her ID) in a dictionary for future lookups
 6. Add Book -> adds a book in the Set of books
-7. Burrow Book -> finds the employee by ID, checks if the books is in stock, checks the subscription type for
-                  that company and creates a new loan entry in the system
-8. Add Review -> check if the employee and loan exists and adds a new review for a book
-9. Transfer Book To A Colleague -> an employee can transfer a book to a colleague if the loan is still active,
-                                   if they are in the same company and if the colleague hasn't reached his/her
-                                   subscription limit
+7. Burrow Book -> finds the user by ID, checks if the books is in stock, checks the subscription type for
+                  that user and creates a new loan entry in the system
+8. Add Review -> check if the user and loan exists and adds a new review for a book
+9. Transfer Book To A Peer -> a user can transfer a book to a peer if the loan is still active,
+                              if they are in the same institution and if the peer hasn't reached his/her
+                              subscription limit
 10. Display Catalogue -> displays the entire book catalogue
 
 Phase 2:
@@ -34,7 +35,7 @@ Phase 2:
 
 New methods:
 1. Generate Overdue Report -> iterates through all active loans, compares the due date to the current date using java.time API
-                              and calculates the exact number of days an employee is late returning a book
+                              and calculates the exact number of days a user is late returning a book
 2. Display Top Rated Books -> groups all reviews by book, calculates the average rating using streams,
                               sorts the catalogue descending based on these averages and displays the top 3 books in the system.
 */
@@ -91,37 +92,53 @@ public class Main {
         platform.displayCatalogue();
 
 
-        System.out.println("\n Testing employees and loans:");
+        System.out.println("\n Testing users (Employees & Students) and loans:");
 
         Employee andrei = new Employee(201, "Andrei", "andrei@amazon.ro", amazon);
         Employee elena = new Employee(202, "Elena", "elena@netflix.ro", netflix);
         Employee radu = new Employee(203, "Radu", "radu@amazon.ro", amazon);
 
-        platform.registerEmployee(andrei);
-        platform.registerEmployee(elena);
-        platform.registerEmployee(radu);
+        Student vlad = new Student(301, "Vlad", "vlad@s.unibuc.ro", "FMI Bucuresti");
+
+        platform.registerUser(andrei);
+        platform.registerUser(elena);
+        platform.registerUser(radu);
+        platform.registerUser(vlad);
 
         try {
-            platform.borrowBook(201, book10);
-            platform.borrowBook(202, book11);
+            platform.borrowBook(201, book10); // Andrei (Enterprise limit 5)
+            platform.borrowBook(202, book11); // Elena (Startup limit 1)
 
+            // This will throw BorrowLimitExceededException for Elena
             platform.borrowBook(202, book12);
         } catch (Exception e) {
-            System.err.println("LOAN ERROR: " + e.getMessage());
+            System.err.println("LOAN ERROR (Employee): " + e.getMessage());
+        }
+
+        try {
+            // Testing Student borrowing rules
+            platform.borrowBook(301, book12); // Vlad borrows Leaders Eat Last
+            platform.borrowBook(301, book10); // Vlad borrows Start With Why (StudentFree limit 2 reached)
+
+            // This will throw BorrowLimitExceededException for Vlad
+            platform.borrowBook(301, book11);
+        } catch (Exception e) {
+            System.err.println("LOAN ERROR (Student): " + e.getMessage());
         }
 
         try {
             System.out.println();
-            platform.transferBookToColleague(201, 203, book10);
+            platform.transferBookToPeer(201, 203, book10);
         } catch (Exception e) {
             System.err.println("TRANSFER ERROR: " + e.getMessage());
         }
 
 
         System.out.println("\n Review testing:");
-        platform.addReview(book10, 203, 5, "Great concepts"); // Radu evalueaza Start With Why
-        platform.addReview(book10, 202, 4, "Good enough, but repetitive in places"); // Elena evalueaza Start With Why
+        platform.addReview(book10, 203, 5, "Great concepts"); // Radu reviews Start With Why
+        platform.addReview(book10, 202, 4, "Good enough, but repetitive in places"); // Elena reviews Start With Why
         platform.addReview(book11, 202, 5, "Great dystopian book");
+        platform.addReview(book12, 301, 5, "Amazing leadership insights!"); // Vlad reviews Leaders Eat Last
 
         platform.displayTopRatedBooks();
 
@@ -131,6 +148,6 @@ public class Main {
         System.out.println("\n Final Db check:");
         platform.displayCatalogue();
 
-        System.out.println("\n Check the platform_log file");
+        System.out.println("\n Check the platform_log.csv file");
     }
 }

@@ -24,55 +24,52 @@ public class PlatformService {
         this.auditService = AuditService.getInstance();
     }
 
-    public void registerEmployee(Employee employee) {
-        users.put(employee.getId(), employee);
-
-        auditService.logAction("REGISTER_EMPLOYEE");
+    public void registerUser(User user) {
+        users.put(user.getId(), user);
+        auditService.logAction("REGISTER_USER");
     }
 
     public void addBook(Book book) {
         bookRepository.create(book);
-
         auditService.logAction("ADD_BOOK");
     }
 
-    public void borrowBook(int employeeId, Book book) throws OutOfStockException, BorrowLimitExceededException {
-        Employee employee = (Employee) users.get(employeeId);
+    public void borrowBook(int userId, Book book) throws OutOfStockException, BorrowLimitExceededException {
+        User user = users.get(userId);
 
-        if (employee == null) {
-            throw new IllegalArgumentException("Employee not found in the database!");
+        if (user == null) {
+            throw new IllegalArgumentException("User not found in the database!");
         }
 
         if (book.getAvailableCopies() <= 0) {
             throw new OutOfStockException("The book '" + book.getTitle() + "' is currently out of stock.");
         }
 
-        Subscription companySubscription = employee.getCompany().getSubscription();
-        if (employee.getCurrentlyBorrowedBooks() >= companySubscription.getSimultaneousBooksLimit()) {
+        Subscription subscription = user.getSubscription();
+        if (user.getCurrentlyBorrowedBooks() >= subscription.getSimultaneousBooksLimit()) {
             throw new BorrowLimitExceededException(
-                    "Employee " + employee.getName() + " has reached the limit of " +
-                            companySubscription.getSimultaneousBooksLimit() + " books ("
-                            + companySubscription.getPackageName() + " Package)."
+                    "User " + user.getName() + " has reached the limit of " +
+                            subscription.getSimultaneousBooksLimit() + " books ("
+                            + subscription.getPackageName() + " Package)."
             );
         }
 
         book.decreaseStock();
-        employee.incrementBorrowedBooks();
+        user.incrementBorrowedBooks();
 
-        Loan newLoan = new Loan(employee, book);
+        Loan newLoan = new Loan(user, book);
         loanHistory.add(newLoan);
 
         bookRepository.update(book);
 
-        System.out.println(employee.getName() + " borrowed the book " + book.getTitle());
-
+        System.out.println(user.getName() + " borrowed the book " + book.getTitle());
         auditService.logAction("BORROW_BOOK");
     }
 
-    public void addReview(Book book, int employeeId, int rating, String message) {
-        Employee employee = (Employee) users.get(employeeId);
-        if(employee != null) {
-            Review r = new Review(book, employee, rating, message);
+    public void addReview(Book book, int userId, int rating, String message) {
+        User user = users.get(userId);
+        if(user != null) {
+            Review r = new Review(book, user, rating, message);
             systemReviews.add(r);
             System.out.println("Review added for (" + book.getTitle() + ").");
 
@@ -80,26 +77,26 @@ public class PlatformService {
         }
     }
 
-    public void transferBookToColleague(int fromEmployeeId, int toEmployeeId, Book book)
+    public void transferBookToPeer(int fromUserId, int toUserId, Book book)
             throws InvalidTransferException, BorrowLimitExceededException {
 
-        Employee sender = (Employee) users.get(fromEmployeeId);
-        Employee receiver = (Employee) users.get(toEmployeeId);
+        User sender = users.get(fromUserId);
+        User receiver = users.get(toUserId);
 
         if (sender == null || receiver == null) {
-            throw new IllegalArgumentException("One or both employees not found!");
+            throw new IllegalArgumentException("One or both users not found!");
         }
 
-        if (!sender.getCompany().getName().equals(receiver.getCompany().getName())) {
+        if (!sender.getInstitutionName().equals(receiver.getInstitutionName())) {
             throw new InvalidTransferException(
                     "Transfer denied: " + sender.getName() + " and " + receiver.getName() +
-                            " work for different companies!"
+                            " are not in the same institution!"
             );
         }
 
         Loan activeLoan = null;
         for (Loan loan : loanHistory) {
-            if (loan.getEmployee().getId() == fromEmployeeId &&
+            if (loan.getUser().getId() == fromUserId &&
                     loan.getBook().getTitle().equals(book.getTitle()) &&
                     !loan.isReturned()) {
                 activeLoan = loan;
@@ -111,7 +108,7 @@ public class PlatformService {
             throw new InvalidTransferException(sender.getName() + " does not have an active loan for this book.");
         }
 
-        Subscription sub = receiver.getCompany().getSubscription();
+        Subscription sub = receiver.getSubscription();
         if (receiver.getCurrentlyBorrowedBooks() >= sub.getSimultaneousBooksLimit()) {
             throw new BorrowLimitExceededException(
                     receiver.getName() + " has reached the limit of " + sub.getSimultaneousBooksLimit() + " books."
@@ -146,7 +143,7 @@ public class PlatformService {
     }
 
     public void generateOverdueReport() {
-        System.out.println("\nOverdue books:");
+        System.out.println("\n Overdue books:");
         boolean foundOverdue = false;
         LocalDate today = LocalDate.now();
 
@@ -155,10 +152,10 @@ public class PlatformService {
 
                 long daysLate = java.time.temporal.ChronoUnit.DAYS.between(loan.getDueDate(), today);
 
-                System.out.println("Employee: " + loan.getEmployee().getName() +
-                        " | At Company: " + loan.getEmployee().getCompany().getName() +
+                System.out.println("User: " + loan.getUser().getName() +
+                        " | Institution: " + loan.getUser().getInstitutionName() +
                         " | Book: " + loan.getBook().getTitle() +
-                        " | Delay: " + daysLate);
+                        " | Days late: " + daysLate);
                 foundOverdue = true;
             }
         }
@@ -171,9 +168,9 @@ public class PlatformService {
     }
 
     public void displayTopRatedBooks() {
-        System.out.println("\n Best books based on reviews:");
+        System.out.println("\n Best rated books:");
         if (systemReviews.isEmpty()) {
-            System.out.println("No reviews found");
+            System.out.println("No reviews in the system");
             return;
         }
 
