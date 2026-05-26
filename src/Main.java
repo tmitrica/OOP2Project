@@ -24,348 +24,113 @@ This project emulates an online app for book borrowing for companies. The 8 clas
                                    if they are in the same company and if the colleague hasn't reached his/her
                                    subscription limit
 10. Display Catalogue -> displays the entire book catalogue
- */
 
-import java.time.LocalDate;
-import java.util.*;
+Phase 2:
+1. DatabaseConnection - a Singleton class that establishes and manages the JDBC connection to a PostgreSQL database.
+2. CrudRepository<T, ID> - a generic interface defining standard database operations (create, read, update, delete, readAll).
+3. Repository Classes (SubscriptionRepository, CompanyRepository, AuthorRepository, BookRepository) - Singleton implementations of the CrudRepository that handle specific
+                                                                                                      SQL queries mapping Java objects to database tables.
+4. AuditService - a Singleton service responsible for logging every major action executed in the system into a local CSV file ("platform_log.csv") alongside a timestamp.
 
-//exceptions used for different use cases
-class OutOfStockException extends Exception {
-    public OutOfStockException(String message) { super(message); }
-}
+New methods:
+1. Generate Overdue Report -> iterates through all active loans, compares the due date to the current date using java.time API
+                              and calculates the exact number of days an employee is late returning a book
+2. Display Top Rated Books -> groups all reviews by book, calculates the average rating using streams,
+                              sorts the catalogue descending based on these averages and displays the top 3 books in the system.
+*/
 
-class BorrowLimitExceededException extends Exception {
-    public BorrowLimitExceededException(String message) { super(message); }
-}
+import db.AuthorRepository;
+import db.CompanyRepository;
+import db.DatabaseConnection;
+import db.SubscriptionRepository;
+import exception.BorrowLimitExceededException;
+import exception.OutOfStockException;
+import model.*;
+import service.PlatformService;
 
-class InvalidTransferException extends Exception {
-    public InvalidTransferException(String message) { super(message); }
-}
-
-class Subscription {
-    private String packageName;
-    private int simultaneousBooksLimit;
-    private double monthlyCostPerEmployee;
-
-    public Subscription(String packageName, int simultaneousBooksLimit, double monthlyCost) {
-        this.packageName = packageName;
-        this.simultaneousBooksLimit = simultaneousBooksLimit;
-        this.monthlyCostPerEmployee = monthlyCost;
-    }
-
-    public int getSimultaneousBooksLimit() { return simultaneousBooksLimit; }
-    public String getPackageName() { return packageName; }
-}
-
-class Company {
-    private String taxId;
-    private String name;
-    private String headquartersAddress;
-    private Subscription subscription;
-
-    public Company(String taxId, String name, String headquartersAddress, Subscription subscription) {
-        this.taxId = taxId;
-        this.name = name;
-        this.headquartersAddress = headquartersAddress;
-        this.subscription = subscription;
-    }
-
-    public String getName() { return name; }
-    public Subscription getSubscription() { return subscription; }
-}
-
-class Author {
-    private String name;
-    private String nationality;
-
-    public Author(String name, String nationality) {
-        this.name = name;
-        this.nationality = nationality;
-    }
-    public String getName() { return name; }
-}
-
-abstract class User {
-    protected int id;
-    protected String name;
-    protected String email;
-
-    public User(int id, String name, String email) {
-        this.id = id;
-        this.name = name;
-        this.email = email;
-    }
-    public int getId() { return id; }
-    public String getName() { return name; }
-}
-
-class Employee extends User {
-    private Company company;
-    private int currentlyBorrowedBooks;
-
-    public Employee(int id, String name, String email, Company company) {
-        super(id, name, email);
-        this.company = company;
-        this.currentlyBorrowedBooks = 0;
-    }
-
-    public Company getCompany() { return company; }
-    public int getCurrentlyBorrowedBooks() { return currentlyBorrowedBooks; }
-
-    public void incrementBorrowedBooks() { this.currentlyBorrowedBooks++; }
-    public void decrementBorrowedBooks() { this.currentlyBorrowedBooks--; }
-}
-
-class Book implements Comparable<Book> {
-    private String isbn;
-    private String title;
-    private Author author;
-    private int publicationYear;
-    private int availableCopies;
-
-    public Book(String isbn, String title, Author author, int publicationYear, int availableCopies) {
-        this.isbn = isbn;
-        this.title = title;
-        this.author = author;
-        this.publicationYear = publicationYear;
-        this.availableCopies = availableCopies;
-    }
-
-    public String getTitle() { return title; }
-    public int getAvailableCopies() { return availableCopies; }
-
-    public void decreaseStock() { this.availableCopies--; }
-    public void increaseStock() { this.availableCopies++; }
-
-
-    @Override
-    public int compareTo(Book other) {
-        int yearDiff = Integer.compare(other.publicationYear, this.publicationYear);
-        if (yearDiff != 0) return yearDiff;
-        return this.title.compareTo(other.title);
-    }
-
-    @Override
-    public String toString() {
-        return title + " (" + publicationYear + ") by " + author.getName();
-    }
-}
-
-class Loan {
-    private Employee employee;
-    private Book book;
-    private LocalDate borrowDate;
-    private LocalDate dueDate;
-    private boolean isReturned;
-
-    public Loan(Employee employee, Book book) {
-        this.employee = employee;
-        this.book = book;
-        this.borrowDate = LocalDate.now();
-        this.dueDate = LocalDate.now().plusDays(30);
-        this.isReturned = false;
-    }
-
-    public Employee getEmployee() { return employee; }
-    public Book getBook() { return book; }
-    public boolean isReturned() { return isReturned; }
-
-    public void markAsReturned() { this.isReturned = true; }
-}
-
-class Review {
-    private Book book;
-    private Employee employee;
-    private int rating; // 1-5
-    private String comment;
-
-    public Review(Book book, Employee employee, int rating, String comment) {
-        this.book = book;
-        this.employee = employee;
-        this.rating = Math.max(1, Math.min(5, rating));
-        this.comment = comment;
-    }
-
-    @Override
-    public String toString() {
-        return "Rating: " + rating + "/5 - " + comment + " (by " + employee.getName() + ")";
-    }
-}
-
-class PlatformService {
-    private Map<Integer, User> users = new HashMap<>();
-
-    private Set<Book> bookCatalogue = new TreeSet<>();
-
-    private List<Loan> loanHistory = new ArrayList<>();
-    private List<Review> systemReviews = new ArrayList<>();
-
-    public void registerEmployee(Employee employee) {
-        users.put(employee.getId(), employee);
-    }
-
-    public void addBook(Book book) {
-        bookCatalogue.add(book);
-    }
-
-    public void borrowBook(int employeeId, Book book) throws OutOfStockException, BorrowLimitExceededException {
-        Employee employee = (Employee) users.get(employeeId);
-
-        if (employee == null) {
-            throw new IllegalArgumentException("Employee not found in the database!");
-        }
-
-        if (book.getAvailableCopies() <= 0) {
-            throw new OutOfStockException("The book '" + book.getTitle() + "' is currently out of stock.");
-        }
-
-        Subscription companySubscription = employee.getCompany().getSubscription();
-        if (employee.getCurrentlyBorrowedBooks() >= companySubscription.getSimultaneousBooksLimit()) {
-            throw new BorrowLimitExceededException(
-                    "Employee " + employee.getName() + " has reached the limit of " +
-                            companySubscription.getSimultaneousBooksLimit() + " books ("
-                            + companySubscription.getPackageName() + " Package)."
-            );
-        }
-
-        book.decreaseStock();
-        employee.incrementBorrowedBooks();
-
-        Loan newLoan = new Loan(employee, book);
-        loanHistory.add(newLoan);
-
-        System.out.println(employee.getName() + " borrowed the book " + book.getTitle());
-    }
-
-    public void addReview(Book book, int employeeId, int rating, String message) {
-        Employee employee = (Employee) users.get(employeeId);
-        if(employee != null) {
-            Review r = new Review(book, employee, rating, message);
-            systemReviews.add(r);
-            System.out.println("Review added for (" + book.getTitle() + ").");
-        }
-    }
-
-    public void transferBookToColleague(int fromEmployeeId, int toEmployeeId, Book book)
-            throws InvalidTransferException, BorrowLimitExceededException {
-
-        Employee sender = (Employee) users.get(fromEmployeeId);
-        Employee receiver = (Employee) users.get(toEmployeeId);
-
-        if (sender == null || receiver == null) {
-            throw new IllegalArgumentException("One or both employees not found!");
-        }
-
-        if (!sender.getCompany().getName().equals(receiver.getCompany().getName())) {
-            throw new InvalidTransferException(
-                    "Transfer denied: " + sender.getName() + " and " + receiver.getName() +
-                            " work for different companies!"
-            );
-        }
-
-        Loan activeLoan = null;
-        for (Loan loan : loanHistory) {
-            if (loan.getEmployee().getId() == fromEmployeeId &&
-                    loan.getBook().getTitle().equals(book.getTitle()) &&
-                    !loan.isReturned()) {
-                activeLoan = loan;
-                break;
-            }
-        }
-
-        if (activeLoan == null) {
-            throw new InvalidTransferException(sender.getName() + " does not have an active loan for this book.");
-        }
-
-        Subscription sub = receiver.getCompany().getSubscription();
-        if (receiver.getCurrentlyBorrowedBooks() >= sub.getSimultaneousBooksLimit()) {
-            throw new BorrowLimitExceededException(
-                    receiver.getName() + " has reached the limit of " + sub.getSimultaneousBooksLimit() + " books."
-            );
-        }
-
-        activeLoan.markAsReturned();
-        sender.decrementBorrowedBooks();
-
-        receiver.incrementBorrowedBooks();
-        Loan newLoan = new Loan(receiver, book);
-        loanHistory.add(newLoan);
-
-        System.out.println("The book (" + book.getTitle() + ") was passed from "
-                + sender.getName() + " directly to " + receiver.getName() + ".");
-    }
-
-    public void displayCatalogue() {
-        System.out.println("\n Book catalogue: ");
-        for (Book b : bookCatalogue) {
-            System.out.println(b.toString() + " | Available: " + b.getAvailableCopies());
-        }
-    }
-}
-
+import java.sql.Connection;
 
 public class Main {
     public static void main(String[] args) {
+        System.out.println("Database initialization:");
+        Connection conn = DatabaseConnection.getConnection();
+
+        SubscriptionRepository subRepo = SubscriptionRepository.getInstance(conn);
+        CompanyRepository compRepo = CompanyRepository.getInstance(conn);
+        AuthorRepository authRepo = AuthorRepository.getInstance(conn);
+
+        Subscription startupPackage = new Subscription("Startup", 1, 15.0);
+        Subscription enterprisePackage = new Subscription("Enterprise", 5, 50.0);
+        subRepo.create(startupPackage);
+        subRepo.create(enterprisePackage);
+
+        Company netflix = new Company("RO888", "Netflix", "Cluj", startupPackage);
+        Company amazon = new Company("RO999", "Amazon", "Iasi", enterprisePackage);
+        compRepo.create(netflix);
+        compRepo.create(amazon);
+
+        Author simonSinek = new Author("Simon Sinek", "UK");
+        Author georgeOrwell = new Author("George Orwell", "UK");
+        authRepo.create(simonSinek);
+        authRepo.create(georgeOrwell);
+
+        System.out.println("Entities were saved into db\n");
+
+
+        System.out.println("Platform service checks:");
         PlatformService platform = new PlatformService();
 
-        Subscription basicPackage = new Subscription("Basic", 1, 10.0);
-        Subscription premiumPackage = new Subscription("Premium", 3, 25.0);
+        Book book10 = new Book("ISBN-10", "Start With Why", simonSinek, 2009, 3);
+        Book book11 = new Book("ISBN-11", "1984", georgeOrwell, 1949, 1);
+        Book book12 = new Book("ISBN-12", "Leaders Eat Last", simonSinek, 2014, 2);
 
-        Company microsoft = new Company("1234", "Microsoft", "Bucharest", basicPackage);
-        Company google = new Company("5678", "Google", "Bucharest", premiumPackage);
-
-        Author jamesClear = new Author("James Clear", "USA");
-        Author robertK = new Author("Robert Kiyosaki", "USA");
-
-        Book book1 = new Book("ISBN-1", "Atomic Habits", jamesClear, 2018, 5);
-        Book book2 = new Book("ISBN-2", "Rich Dad Poor Dad", robertK, 1997, 1);
-        Book book3 = new Book("ISBN-3", "Clear Thinking", jamesClear, 2023, 2);
-
-        platform.addBook(book1);
-        platform.addBook(book2);
-        platform.addBook(book3);
-
-        Employee mihai = new Employee(101, "Mihai", "mihai@microsoft.ro", microsoft);
-        Employee maria = new Employee(102, "Maria", "maria@google.ro", google);
-
-        platform.registerEmployee(mihai);
-        platform.registerEmployee(maria);
+        platform.addBook(book10);
+        platform.addBook(book11);
+        platform.addBook(book12);
 
         platform.displayCatalogue();
 
+
+        System.out.println("\n Testing employees and loans:");
+
+        Employee andrei = new Employee(201, "Andrei", "andrei@amazon.ro", amazon);
+        Employee elena = new Employee(202, "Elena", "elena@netflix.ro", netflix);
+        Employee radu = new Employee(203, "Radu", "radu@amazon.ro", amazon);
+
+        platform.registerEmployee(andrei);
+        platform.registerEmployee(elena);
+        platform.registerEmployee(radu);
+
         try {
+            platform.borrowBook(201, book10);
+            platform.borrowBook(202, book11);
 
-            platform.borrowBook(101, book1);
-
-            platform.borrowBook(101, book3);
-
+            platform.borrowBook(202, book12);
         } catch (Exception e) {
-            System.err.println("ERROR (Mihai): " + e.getMessage());
+            System.err.println("LOAN ERROR: " + e.getMessage());
         }
 
         try {
-            platform.borrowBook(102, book2);
-
-            platform.borrowBook(102, book2);
-
-        } catch (Exception e) {
-            System.err.println("ERROR (Maria): " + e.getMessage());
-        }
-
-        Employee alex = new Employee(103, "Alex", "alex@microsoft.ro", microsoft);
-        platform.registerEmployee(alex);
-
-        try {
-            platform.transferBookToColleague(101, 103, book1);
-
-            platform.transferBookToColleague(103, 102, book1);
+            System.out.println();
+            platform.transferBookToColleague(201, 203, book10);
         } catch (Exception e) {
             System.err.println("TRANSFER ERROR: " + e.getMessage());
         }
 
-        System.out.println();
-        platform.addReview(book1, 101, 5, "It made me love life");
 
+        System.out.println("\n Review testing:");
+        platform.addReview(book10, 203, 5, "Great concepts"); // Radu evalueaza Start With Why
+        platform.addReview(book10, 202, 4, "Good enough, but repetitive in places"); // Elena evalueaza Start With Why
+        platform.addReview(book11, 202, 5, "Great dystopian book");
+
+        platform.displayTopRatedBooks();
+
+        platform.generateOverdueReport();
+
+
+        System.out.println("\n Final Db check:");
         platform.displayCatalogue();
+
+        System.out.println("\n Check the platform_log file");
     }
 }
